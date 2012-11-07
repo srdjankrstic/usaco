@@ -1,4 +1,4 @@
 usaco
 =====
 
-My solutions to USACO problems
+My solutions to USACO problems in C++
