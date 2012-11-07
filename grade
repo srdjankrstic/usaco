@@ -1,0 +1,163 @@
+#!/bin/bash
+
+#####################################################################
+# Reading input
+
+VERBOSE=0
+DEBUG=0;
+
+args=`getopt vgt: $*`
+if test $? != 0
+     then
+         echo 'Usage: [-v] [-g] [-t test_number]'
+         exit 1
+fi
+set -- $args
+for i
+do
+  case "$i" in
+        -t) shift; TEST_NUMBER=$1; shift;;
+        -v) shift; VERBOSE=$(( $VERBOSE + 1 ));;
+        -g) shift; DEBUG=1;;
+  esac
+done
+
+PROGNAME=${@: -1}
+
+
+#####################################################################
+# Globals
+
+float_scale=2
+
+green='\e[0;32m'
+red='\e[0;31m'
+yellow='\e[0;33m'
+blue='\e[0;34m'
+endColor='\e[0m'
+
+CUTOFF_TIME=0.5
+
+
+#####################################################################
+# Evaluate a floating point number expression.
+
+function float_eval()
+{
+    local stat=0
+    local result=0.0
+    if [[ $# -gt 0 ]]; then
+        result=$(echo "scale=$float_scale; $*" | bc -q 2>/dev/null)
+        stat=$?
+        if [[ $stat -eq 0  &&  -z "$result" ]]; then stat=1; fi
+    fi
+    echo $result
+    return $stat
+}
+
+
+#####################################################################
+# Evaluate a floating point number conditional expression.
+
+function float_cond()
+{
+    local cond=0
+    if [[ $# -gt 0 ]]; then
+        cond=$(echo "$*" | bc -q 2>/dev/null)
+        if [[ -z "$cond" ]]; then cond=0; fi
+        if [[ "$cond" != 0  &&  "$cond" != 1 ]]; then cond=0; fi
+    fi
+    local stat=$((cond == 0))
+    return $stat
+}
+
+#####################################################################
+# Helper functions
+
+function trim()
+{
+    echo $1;
+}
+
+function clean()
+{    
+    local ret=0;
+    rm -rf "$PROGNAME.in"
+    ret=$(( $ret + $? ))
+
+    rm -rf "$PROGNAME.out"
+    ret=$(( $ret + $? ))
+
+    `rm -rf $PROGNAME.err.*`
+    ret=$(( $ret + $? ))
+
+    return $ret
+}
+
+function compile()
+{
+    if [[ $DEBUG ]]; then
+        g++ -Wall -g -o "$PROGNAME" "$PROGNAME.cpp"
+        return $?
+    else
+        g++ -Wall -o "$PROGNAME" "$PROGNAME.cpp"
+        return $?
+    fi
+}
+
+function gettime()
+{
+    local s=`date "+%s.%N"`
+    echo $s
+}
+
+function do_file()
+{
+    file=$1
+    number=${file##*.}
+
+    cp "$file" "$PROGNAME.in"
+    time1=$(gettime)
+    ./$PROGNAME || exit $?
+    time2=$(gettime)
+    runtime=$(float_eval "$time2 - $time1")
+    line=`head -1 $PROGNAME.out.$number`
+    
+    if diff "$PROGNAME.out" "$PROGNAME.out.$number" >/dev/null; then
+        if float_cond "$runtime > $CUTOFF_TIME"; then
+            echo -e "${yellow}Test $number: CORRECT  \t\tRuntime: "$(printf '%8.5f' $runtime)"s${endColor}"
+        else
+            echo -e "${green}Test $number: CORRECT  \t\tRuntime: "$(printf '%8.5f' $runtime)"s${endColor}"
+        fi
+    else
+        if [ "$line" == "#!empty" ]; then
+            echo -e "${blue}Test $number: UNKNOWN  \t\tRuntime: "$(printf '%8.5f' $runtime)"s${endColor}"
+
+            if [[ "$VERBOSE" == "2" ]]; then
+                cat "$PROGNAME.out"
+            fi
+        else
+            echo -e "${red}Test $number: WRONG    \t\tRuntime: "$(printf '%8.5f' $runtime)"s${endColor}"
+
+            if [[ "$VERBOSE" != "0" ]]; then
+                colordiff -y "$PROGNAME.out" "$PROGNAME.out.$number"
+            fi
+            colordiff -y "$PROGNAME.out" "$PROGNAME.out.$number" >"$PROGNAME.err.$number"
+        fi
+    fi
+}
+
+
+#####################################################################
+# Main code
+
+compile || exit $?
+clean || exit $?
+
+if [[ -n ${TEST_NUMBER} ]]; then
+    do_file "$PROGNAME.in.$TEST_NUMBER"
+else
+    for file in `ls $PROGNAME.in.*[^~]`; do
+        do_file $file
+    done
+fi

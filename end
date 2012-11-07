@@ -1,0 +1,6 @@
+#!/bin/bash
+
+rm -rf *~
+mkdir __1__
+mv $1* __1__
+mv __1__ $1
